@@ -1,0 +1,1 @@
+# Update-AzMyPublicIP.ps1
