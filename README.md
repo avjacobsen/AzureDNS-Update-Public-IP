@@ -12,4 +12,4 @@ Make sure you don't have a CNAME record of the record you wish to create/update.
 # Todo
 - The ARecordToUpdate settings is not the FQDN, only the name. Ex. if DNS zone is example.com, and you want to change publicip.example.com, then set ARecordToUpdate to publicip, not public.example.com.
 - Previous values: I forgot to note old value in log file when changing IP.
-
+- Write a scheduling routine, so that the script can run with task scheduler.
