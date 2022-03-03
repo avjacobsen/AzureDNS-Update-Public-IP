@@ -65,8 +65,8 @@ function Update-Config {
         $TenantId = Read-Host -Prompt "Azure Tenant Id"
         $ResourceGroupName = Read-Host -Prompt "Azure Resource Group Name"
         $ZoneName = Read-Host -Prompt "DNS Zone"
-        $ARecordToUpdate = Read-Host -Prompt "A-record to update [homewanip]"
-        if ($ARecordToUpdate -eq "") { $ARecordToUpdate = "homewanip" }
+        $ARecordToUpdate = Read-Host -Prompt "A-record to update [mywanip]"
+        if ($ARecordToUpdate -eq "") { $ARecordToUpdate = "mywanip" }
         $Config = @{"Account" = $UserName; "Password" = $HashedSecureString; "TenantId" = $TenantId; "ResourceGroupName" = $ResourceGroupName; "ZoneName" = $ZoneName; "ARecordToUpdate" = $ARecordToUpdate }
         Write-LogMessage "Saving config file: $ConfigFile"
         $Config | ConvertTo-Json | Set-Content -Path $ConfigFile
