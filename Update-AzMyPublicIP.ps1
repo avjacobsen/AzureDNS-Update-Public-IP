@@ -1,4 +1,7 @@
 # Update-AzMyPublicIP.ps1
+# Runtime Environment: Windows Powershell
+# Modules: Az
+# Hint: Install-Module Az
 
 function Write-LogMessage {
     # Source: https://github.com/avjacobsen/Write-LogMessage
