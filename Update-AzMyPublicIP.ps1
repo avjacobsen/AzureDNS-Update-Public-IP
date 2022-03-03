@@ -2,6 +2,7 @@
 # Runtime Environment: Windows Powershell
 # Modules: Az
 # Hint: Install-Module Az
+# Hint: Import-Module Az
 
 function Write-LogMessage {
     # Source: https://github.com/avjacobsen/Write-LogMessage
