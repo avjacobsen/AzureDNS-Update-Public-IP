@@ -34,7 +34,6 @@ function Get-ConfigPath {
 }
 function Get-Config {
     param([string]$Path)
-    # This function never actually saves anything to disk. Maybe a good idea to implement.
     if ($Path -eq "") {
         $Path = Get-ConfigPath -Path $Path
     }
@@ -52,6 +51,7 @@ function Get-Config {
                 "resource_group_name" = $(Read-Host -Prompt "Resource Group Name")
                 "zone_name"           = $(Read-Host -Prompt "Zone Name")
                 "a_record_to_update"  = $(Read-Host -Prompt "Record Name (without zone name)")
+                "last_record_value"   = ""
             }
         }
         Write-LogMessage "Saving config to $Path" -Verbose
@@ -66,6 +66,14 @@ function Get-Count {
         if ($null -eq $Object.Count) { return 1 }
         else { return $Object.Count }
     }
+}
+function Set-Config {
+    param([string]$Path, $Config)
+    if ($Path -eq "") {
+        $Path = Get-ConfigPath -Path $Path
+    }
+    Write-LogMessage "Saving config to $Path" -Verbose
+    $Config | ConvertTo-Json | Set-Content -Path $Path -Encoding UTF8
 }
 function Write-LogMessage {
     # Source: https://github.com/avjacobsen/Write-LogMessage
@@ -108,46 +116,67 @@ function Write-LogMessage {
 
 try {
     $Config = Get-Config
-    Write-LogMessage "Connecting to Azure..." -Verbose
-    $AzAccount = Connect-AzAccount -Credential (Get-AzCredential -Config $Config) -Subscription ($Config.azure.subscription_id)
-    Write-LogMessage "Connected to $($AzAccount.Context.Subscription.Name) as $($AzAccount.Context.Account.Id)." -Verbose
-    Write-LogMessage "Getting resource group..." -Verbose
-    $AzResourceGroup = Get-AzResourceGroup
-    Write-LogMessage "Resource Group ID: $($AzResourceGroup.ResourceId)" -Verbose
-    Write-LogMessage "Getting DNS Zone..." -Verbose
-    $AzDNSZone = Get-AzDnsZone -Name $Config.azure.zone_name -ResourceGroupName $AzResourceGroup.ResourceGroupName
-    Write-LogMessage "DNS Zone: $($AzDNSZone.Name)" -Verbose
-    Write-LogMessage "Getting record sets..." -Verbose
-    $RecordSets = Get-AzDnsRecordSet -ZoneName $AzDNSZone.Name -ResourceGroupName $AzResourceGroup.ResourceGroupName
-    Write-LogMessage "Found $(Get-Count -Object $RecordSets) records." -Verbose
-    Write-LogMessage "Making sure CNAME for $($Config.azure.a_record_to_update).$($Config.azure.zone_name) doesn't already exist..." -Verbose
-    $RecordSet = $RecordSets | Where-Object { $_.Name -eq $Config.azure.a_record_to_update } | Where-Object { $_.RecordType -eq "CNAME" }
-    if ($null -ne $RecordSet) { Write-LogMessage "CNAME record exists. Aborting." -Verbose; exit } else { Write-LogMessage "CNAME record not present." -Verbose }
-    Write-LogMessage "Determining public IP via https://api.myip.com..." -Verbose
-    $MyIP = ((Invoke-WebRequest -UseBasicParsing -Uri "https://api.myip.com").Content | ConvertFrom-Json).ip
-    if ($null -eq $MyIP) { Write-LogMessage "Can't determine public ip." -Verbose }
-    else { Write-LogMessage "Public IP is $MyIP" -Verbose }
-    Write-LogMessage "Locating A record: $($Config.azure.a_record_to_update).$($Config.azure.zone_name)..." -Verbose
-    $RecordSet = $RecordSets | Where-Object { $_.Name -eq $Config.azure.a_record_to_update } | Where-Object { $_.RecordType -eq "A" }
-    if ($null -eq $RecordSet) {
-        Write-LogMessage "No previous record found. Creating..." -Verbose
-        $Records = @()
-        $Records += New-AzDnsRecordConfig -IPv4Address $MyIP
-        $NewDNSRecordSet = New-AzDnsRecordSet -Name $Config.azure.a_record_to_update -RecordType A -ResourceGroupName $AzResourceGroup.ResourceGroupName -ZoneName $Config.azure.zone_name -Ttl 300 -DnsRecords $Records
-        if ($null -eq $NewDNSRecordSet) { Write-LogMessage "Failed." -Verbose; exit }
-        else {
-            Write-LogMessage "Record created." -Verbose
-        }
+    $Current_Record = Resolve-DnsName -Type A -Name "$($Config.azure.a_record_to_update).$($Config.azure.zone_name)"
+    $UpdateRequired = $false
+    if ($null -eq $Current_Record) {
+        Write-Host "No current record found." -Verbose
+        $UpdateRequired = $true
     }
     else {
-        Write-LogMessage "Record already found. Updating..." -Verbose
-        $Record = New-AzDnsRecordConfig -IPv4Address $MyIP
-        $RecordSet.Records.Clear()
-        $RecordSet.Records = $Record
-        $NewDNSRecordSet = Set-AzDnsRecordSet -RecordSet $RecordSet
-        if ($null -eq $NewDNSRecordSet) { Write-LogMessage "Failed." -Verbose; exit }
+        $Current_Record_Value = $Current_Record.IPAddress
+        Write-LogMessage "Current value for DNS record $($Config.azure.a_record_to_update).$($Config.azure.zone_name): $($Current_Record_Value)" -Verbose
+        if ($Current_Record_Value -eq $Config.azure.last_record_value) {
+            Write-LogMessage "No update required." -Verbose
+        }
         else {
-            Write-LogMessage "Record updated." -Verbose
+            Write-LogMessage "Update required." -Verbose
+            $UpdateRequired = $true
+            $Config.azure.last_record_value = $Current_Record_Value
+            Set-Config -Config $Config
+        }
+    }
+    if ($UpdateRequired) {
+        Write-LogMessage "Connecting to Azure..." -Verbose
+        $AzAccount = Connect-AzAccount -Credential (Get-AzCredential -Config $Config) -Subscription ($Config.azure.subscription_id)
+        Write-LogMessage "Connected to $($AzAccount.Context.Subscription.Name) as $($AzAccount.Context.Account.Id)." -Verbose
+        Write-LogMessage "Getting resource group..." -Verbose
+        $AzResourceGroup = Get-AzResourceGroup
+        Write-LogMessage "Resource Group ID: $($AzResourceGroup.ResourceId)" -Verbose
+        Write-LogMessage "Getting DNS Zone..." -Verbose
+        $AzDNSZone = Get-AzDnsZone -Name $Config.azure.zone_name -ResourceGroupName $AzResourceGroup.ResourceGroupName
+        Write-LogMessage "DNS Zone: $($AzDNSZone.Name)" -Verbose
+        Write-LogMessage "Getting record sets..." -Verbose
+        $RecordSets = Get-AzDnsRecordSet -ZoneName $AzDNSZone.Name -ResourceGroupName $AzResourceGroup.ResourceGroupName
+        Write-LogMessage "Found $(Get-Count -Object $RecordSets) records." -Verbose
+        Write-LogMessage "Making sure CNAME for $($Config.azure.a_record_to_update).$($Config.azure.zone_name) doesn't already exist..." -Verbose
+        $RecordSet = $RecordSets | Where-Object { $_.Name -eq $Config.azure.a_record_to_update } | Where-Object { $_.RecordType -eq "CNAME" }
+        if ($null -ne $RecordSet) { Write-LogMessage "CNAME record exists. Aborting." -Verbose; exit } else { Write-LogMessage "CNAME record not present." -Verbose }
+        Write-LogMessage "Determining public IP via https://api.myip.com..." -Verbose
+        $MyIP = ((Invoke-WebRequest -UseBasicParsing -Uri "https://api.myip.com").Content | ConvertFrom-Json).ip
+        if ($null -eq $MyIP) { Write-LogMessage "Can't determine public ip." -Verbose }
+        else { Write-LogMessage "Public IP is $MyIP" -Verbose }
+        Write-LogMessage "Locating A record: $($Config.azure.a_record_to_update).$($Config.azure.zone_name)..." -Verbose
+        $RecordSet = $RecordSets | Where-Object { $_.Name -eq $Config.azure.a_record_to_update } | Where-Object { $_.RecordType -eq "A" }
+        if ($null -eq $RecordSet) {
+            Write-LogMessage "No previous record found. Creating..." -Verbose
+            $Records = @()
+            $Records += New-AzDnsRecordConfig -IPv4Address $MyIP
+            $NewDNSRecordSet = New-AzDnsRecordSet -Name $Config.azure.a_record_to_update -RecordType A -ResourceGroupName $AzResourceGroup.ResourceGroupName -ZoneName $Config.azure.zone_name -Ttl 300 -DnsRecords $Records
+            if ($null -eq $NewDNSRecordSet) { Write-LogMessage "Failed." -Verbose; exit }
+            else {
+                Write-LogMessage "Record created." -Verbose
+            }
+        }
+        else {
+            Write-LogMessage "Record already found. Updating..." -Verbose
+            $Record = New-AzDnsRecordConfig -IPv4Address $MyIP
+            $RecordSet.Records.Clear()
+            $RecordSet.Records = $Record
+            $NewDNSRecordSet = Set-AzDnsRecordSet -RecordSet $RecordSet
+            if ($null -eq $NewDNSRecordSet) { Write-LogMessage "Failed." -Verbose; exit }
+            else {
+                Write-LogMessage "Record updated." -Verbose
+            }
         }
     }
 }
